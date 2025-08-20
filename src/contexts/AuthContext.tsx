@@ -35,6 +35,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         console.log('Initializing auth...');
         
+        // 1. Always get initial session explicitly
         const { data: { session } } = await supabase.auth.getSession();
         
         if (isMounted) {
@@ -55,6 +56,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setProfile(null);
         }
       } finally {
+        // ALWAYS resolve loading - CRITICAL for preventing infinite loading
         if (isMounted) {
           setLoading(false);
           setInitialized(true);
@@ -62,11 +64,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     };
     
+    // 2. Initialize first
     initializeAuth();
     
+    // 3. Then set up listener with guards
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!isMounted || !initialized) return;
+      if (!isMounted || !initialized) return; // Guard clause
       
+      // Ignore INITIAL_SESSION - we handle this manually above
       if (event === 'INITIAL_SESSION') return;
       
       console.log('Auth state change:', event, session?.user?.id);
@@ -74,6 +79,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         if (session?.user) {
           setUser(session.user);
+          // Only navigate on SIGNED_IN event (actual login), not on other events
           const shouldNavigate = event === 'SIGNED_IN';
           await fetchProfile(session.user.id, shouldNavigate);
         } else {
@@ -109,15 +115,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Profile fetched:', data);
       setProfile(data);
       
+      // Navigation logic ONLY after login, not on every profile fetch
       if (shouldNavigate) {
         if (data?.role === 'admin') {
           navigate('/admin');
         } else {
-          navigate('/');
+          navigate('/dashboard');
         }
       }
     } catch (error: any) {
       console.error('Profile fetch failed:', error);
+      // If profile doesn't exist, create it
       if (error.code === 'PGRST116') {
         await createProfile(userId);
       } else {
@@ -147,7 +155,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       console.log('Profile created:', data);
       setProfile(data);
-      navigate('/');
+      navigate('/dashboard');
     } catch (error) {
       console.error('Profile creation failed:', error);
       throw error;
@@ -159,17 +167,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       console.log('Logging out...');
       setLoading(true);
       
+      // 1. Clear state FIRST
       setUser(null);
       setProfile(null);
       
+      // 2. Then sign out
       await supabase.auth.signOut();
       
+      // 3. Clear localStorage
       Object.keys(localStorage).forEach(key => {
         if (key.startsWith('sb-')) {
           localStorage.removeItem(key);
         }
       });
       
+      // 4. Navigate with delay
       setTimeout(() => {
         navigate('/');
         setLoading(false);
